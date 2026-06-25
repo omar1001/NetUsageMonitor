@@ -1,0 +1,9 @@
+# Normalize line endings; treat the icon and exe as binary.
+* text=auto
+*.cs text
+*.xaml text
+*.md text
+*.ps1 text
+*.yml text
+*.ico binary
+*.exe binary

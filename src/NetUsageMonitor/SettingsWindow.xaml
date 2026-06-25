@@ -1,0 +1,78 @@
+<Window x:Class="NetUsageMonitor.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Settings — NetUsage Monitor" Width="560" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        Background="{StaticResource WindowBg}" Icon="Assets/app.ico">
+    <Window.Resources>
+        <Style x:Key="Section" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Foreground" Value="{StaticResource Accent}" />
+            <Setter Property="Margin" Value="0,14,0,6" />
+        </Style>
+        <Style x:Key="Hint" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="Foreground" Value="{StaticResource TextSecondary}" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,2,0,0" />
+        </Style>
+    </Window.Resources>
+
+    <StackPanel Margin="18">
+        <!-- Records folder -->
+        <TextBlock Text="RECORDS LOCATION" Style="{StaticResource Section}" Margin="0,0,0,6" />
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="FolderBox" IsReadOnly="True" />
+            <Button Grid.Column="1" Content="Browse…" Click="OnBrowse" Style="{StaticResource ToolButton}" Margin="8,0,0,0" />
+        </Grid>
+        <TextBlock Style="{StaticResource Hint}" Text="The usage database (only byte counts — never any content) is stored here." />
+
+        <!-- Retention -->
+        <TextBlock Text="RETENTION" Style="{StaticResource Section}" />
+        <StackPanel Orientation="Horizontal">
+            <TextBlock Text="Keep records for the last" VerticalAlignment="Center" />
+            <TextBox x:Name="RetentionBox" Width="60" Margin="8,0" HorizontalContentAlignment="Center" />
+            <TextBlock Text="minutes" VerticalAlignment="Center" />
+        </StackPanel>
+        <TextBlock Style="{StaticResource Hint}"
+                   Text="Older records are deleted automatically — except for apps you mark &quot;Keep records indefinitely&quot; (right-click an app)." />
+        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+            <TextBlock Text="Write to disk every" VerticalAlignment="Center" />
+            <TextBox x:Name="FlushBox" Width="50" Margin="8,0" HorizontalContentAlignment="Center" />
+            <TextBlock Text="seconds (lower = finer history, slightly more disk writes)" VerticalAlignment="Center"
+                       Foreground="{StaticResource TextSecondary}" FontSize="11" />
+        </StackPanel>
+
+        <!-- Tracking -->
+        <TextBlock Text="WHAT TO TRACK" Style="{StaticResource Section}" />
+        <RadioButton x:Name="ModeAll" GroupName="mode" Foreground="{StaticResource TextPrimary}" Margin="0,2"
+                     Content="Track all apps (except ones I ignore)" />
+        <RadioButton x:Name="ModeOnly" GroupName="mode" Foreground="{StaticResource TextPrimary}" Margin="0,2"
+                     Content="Only track the apps I selected with &quot;Only track this app&quot;" />
+        <CheckBox x:Name="ShowIgnoredBox" Content="Show ignored apps in the list (greyed out)" />
+
+        <!-- Background -->
+        <TextBlock Text="BACKGROUND &amp; STARTUP" Style="{StaticResource Section}" />
+        <CheckBox x:Name="BackgroundBox" Content="Keep recording in the background when I close the window (minimize to tray)" />
+        <CheckBox x:Name="StartupBox" Content="Start automatically when Windows starts" />
+        <CheckBox x:Name="StartMinBox" Content="Start minimized to the tray" />
+
+        <!-- Danger zone -->
+        <TextBlock Text="MANAGE RECORDS" Style="{StaticResource Section}" />
+        <StackPanel Orientation="Horizontal">
+            <Button Content="Delete records older than retention" Click="OnDeleteOld" Style="{StaticResource ToolButton}" Margin="0,0,8,0" />
+            <Button Content="Delete ALL records" Click="OnDeleteAll" Style="{StaticResource ToolButton}" />
+        </StackPanel>
+
+        <!-- Footer -->
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">
+            <Button Content="Cancel" Click="OnCancel" Style="{StaticResource ToolButton}" Margin="0,0,8,0" Width="90" />
+            <Button Content="Save" Click="OnSave" Style="{StaticResource AccentButton}" Width="90" />
+        </StackPanel>
+    </StackPanel>
+</Window>

@@ -1,0 +1,19 @@
+# Build output
+bin/
+obj/
+dist/
+*.user
+
+# Rider / VS
+.vs/
+.idea/
+*.suo
+
+# Logs / temp
+*.log
+*.tmp
+
+# Local app data captured during testing
+*.db
+*.db-wal
+*.db-shm

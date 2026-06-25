@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>UiProbe</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Same packages so the referenced library's deps sit next to the probe at runtime. -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.8" />
+    <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.2.4" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Reference the IL assembly directly (no admin manifest, that's only on the apphost .exe). -->
+    <Reference Include="NetUsageMonitor">
+      <HintPath>..\..\src\NetUsageMonitor\bin\Debug\net8.0-windows\win-x64\NetUsageMonitor.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

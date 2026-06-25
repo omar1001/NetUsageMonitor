@@ -1,0 +1,56 @@
+name: Release
+
+# Push a tag like v1.0.0 to build the single-file exe and publish a GitHub Release.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Generate icon
+        shell: pwsh
+        run: ./tools/generate-icon.ps1
+
+      - name: Publish single-file exe
+        shell: pwsh
+        run: dotnet publish src/NetUsageMonitor/NetUsageMonitor.csproj -c Release
+
+      - name: Stage artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item src/NetUsageMonitor/bin/Release/net8.0-windows/win-x64/publish/NetUsageMonitor.exe dist/NetUsageMonitor.exe
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NetUsageMonitor
+          path: dist/NetUsageMonitor.exe
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/NetUsageMonitor.exe
+          generate_release_notes: true
+          body: |
+            **NetUsage Monitor** — live & historical per-app network usage for Windows.
+
+            ### Install
+            1. Download `NetUsageMonitor.exe` below.
+            2. Right-click it → **Run as administrator** (required to read per-app network usage).
+            3. Optional: pin it to the taskbar, and enable **Start with Windows** in Settings.
