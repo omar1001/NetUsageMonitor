@@ -13,6 +13,9 @@ dist/
 *.log
 *.tmp
 
+# Portable GitHub CLI (downloaded locally, not part of the project)
+tools/gh/
+
 # Local app data captured during testing
 *.db
 *.db-wal
