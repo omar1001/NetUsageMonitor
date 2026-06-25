@@ -63,6 +63,7 @@ public sealed class MainViewModel : ObservableObject
         ClearConnectionsCommand = new RelayCommand(o => ClearConnections(AsRow(o)), o => AsRow(o) != null);
         ClearCapCommand = new RelayCommand(o => ClearCap(AsRow(o)), o => AsRow(o)?.HasCap == true);
         ResetCapCommand = new RelayCommand(o => ResetCap(AsRow(o)), o => AsRow(o)?.HasCap == true);
+        KillProcessCommand = new RelayCommand(o => KillProcess(AsRow(o)), o => AsRow(o)?.ExePath != null);
 
         UpdateStatusStrings();
 
@@ -87,6 +88,7 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand ClearConnectionsCommand { get; }
     public RelayCommand ClearCapCommand { get; }
     public RelayCommand ResetCapCommand { get; }
+    public RelayCommand KillProcessCommand { get; }
 
     private ProcessRowViewModel? AsRow(object? o) => (o as ProcessRowViewModel) ?? SelectedRow;
 
@@ -364,6 +366,45 @@ public sealed class MainViewModel : ObservableObject
         Task.Run(() => _tracker.ResetCap(key, exe));
         row.CapTripped = false;
         row.IsBlocked = false;
+    }
+
+    private void KillProcess(ProcessRowViewModel? row)
+    {
+        if (row?.ExePath is not { } exe) return;
+        try
+        {
+            var processes = Process.GetProcessesByName(Path.GetFileNameWithoutExtension(exe));
+            if (processes.Length == 0)
+            {
+                MessageBox.Show($"No running process found for \"{row.DisplayName}\".",
+                    "Kill Process", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Information);
+                return;
+            }
+            if (processes.Length == 1)
+            {
+                processes[0].Kill();
+                MessageBox.Show($"Process \"{row.DisplayName}\" has been terminated.",
+                    "Kill Process", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Information);
+            }
+            else
+            {
+                var answer = MessageBox.Show(
+                    $"Found {processes.Length} instances of \"{row.DisplayName}\". Kill all of them?",
+                    "Kill Process", System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Question);
+                if (answer == System.Windows.MessageBoxResult.Yes)
+                {
+                    foreach (var p in processes)
+                        p.Kill();
+                    MessageBox.Show($"All {processes.Length} instances have been terminated.",
+                        "Kill Process", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Information);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Could not kill process: {ex.Message}",
+                "Kill Process", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
+        }
     }
 
     private void ExportCsv()

@@ -152,6 +152,10 @@
                                                   Command="{Binding PlacementTarget.Tag.ToggleIgnoreCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                                   CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                         <Separator />
+                                        <MenuItem Header="Kill process"
+                                                  Command="{Binding PlacementTarget.Tag.KillProcessCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                  CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                        <Separator />
                                         <MenuItem Header="Only track this app"
                                                   Command="{Binding PlacementTarget.Tag.OnlyTrackThisCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                                   CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
@@ -262,6 +266,8 @@
                             <!-- Primary actions -->
                             <WrapPanel Margin="0,10,0,0">
                                 <Button Content="{Binding SelectedRow.BlockText}" Command="{Binding BlockCommand}"
+                                        CommandParameter="{Binding SelectedRow}" Style="{StaticResource SmallButton}" />
+                                <Button Content="Kill process" Command="{Binding KillProcessCommand}"
                                         CommandParameter="{Binding SelectedRow}" Style="{StaticResource SmallButton}" />
                                 <Button Content="Keep records" Command="{Binding ToggleKeepCommand}"
                                         CommandParameter="{Binding SelectedRow}" Style="{StaticResource SmallButton}" />
