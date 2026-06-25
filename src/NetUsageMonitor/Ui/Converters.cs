@@ -57,6 +57,8 @@ public sealed class NullToVisibilityConverter : IValueConverter
 /// <summary>Maps a row's status string to an accent brush for the status dot.</summary>
 public sealed class StatusBrushConverter : IValueConverter
 {
+    private static readonly SolidColorBrush Blocked = new(Color.FromRgb(0xEF, 0x44, 0x44));   // red
+    private static readonly SolidColorBrush Capped = new(Color.FromRgb(0xF9, 0x73, 0x16));    // orange
     private static readonly SolidColorBrush Kept = new(Color.FromRgb(0xF5, 0x9E, 0x0B));     // amber
     private static readonly SolidColorBrush Ignored = new(Color.FromRgb(0x6B, 0x72, 0x80));  // grey
     private static readonly SolidColorBrush Active = new(Color.FromRgb(0x10, 0xB9, 0x81));   // green
@@ -65,6 +67,8 @@ public sealed class StatusBrushConverter : IValueConverter
     public object Convert(object value, Type targetType, object? parameter, CultureInfo culture)
     {
         var s = value as string ?? "";
+        if (s.Contains("Blocked", StringComparison.OrdinalIgnoreCase)) return Blocked;
+        if (s.Contains("Capped", StringComparison.OrdinalIgnoreCase)) return Capped;
         if (s.Contains("Ignored", StringComparison.OrdinalIgnoreCase)) return Ignored;
         if (s.Contains("Kept", StringComparison.OrdinalIgnoreCase)) return Kept;
         if (s.Contains("Active", StringComparison.OrdinalIgnoreCase)) return Active;

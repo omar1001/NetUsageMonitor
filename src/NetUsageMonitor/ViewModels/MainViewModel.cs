@@ -34,7 +34,8 @@ public sealed class MainViewModel : ObservableObject
         _dispatcher = dispatcher;
 
         RowsView = (ListCollectionView)CollectionViewSource.GetDefaultView(Rows);
-        RowsView.IsLiveSorting = true;
+        // Off by default so rows stay put and are easy to click; user can enable "Auto-sort".
+        RowsView.IsLiveSorting = _settings.AutoSort;
         foreach (var p in new[]
                  {
                      nameof(ProcessRowViewModel.DownRate), nameof(ProcessRowViewModel.UpRate),
@@ -56,6 +57,12 @@ public sealed class MainViewModel : ObservableObject
         DeleteAllRecordsCommand = new RelayCommand(_ => DeleteAllRecords());
         ToggleRecordingCommand = new RelayCommand(_ => ToggleRecording());
         ExportCsvCommand = new RelayCommand(_ => ExportCsv());
+        TogglePauseCommand = new RelayCommand(_ => IsPaused = !IsPaused);
+        BlockCommand = new RelayCommand(o => ToggleBlock(AsRow(o)), o => AsRow(o)?.ExePath != null);
+        RecordConnectionsCommand = new RelayCommand(o => ToggleRecordConnections(AsRow(o)), o => AsRow(o) != null);
+        ClearConnectionsCommand = new RelayCommand(o => ClearConnections(AsRow(o)), o => AsRow(o) != null);
+        ClearCapCommand = new RelayCommand(o => ClearCap(AsRow(o)), o => AsRow(o)?.HasCap == true);
+        ResetCapCommand = new RelayCommand(o => ResetCap(AsRow(o)), o => AsRow(o)?.HasCap == true);
 
         UpdateStatusStrings();
 
@@ -74,6 +81,12 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand DeleteAllRecordsCommand { get; }
     public RelayCommand ToggleRecordingCommand { get; }
     public RelayCommand ExportCsvCommand { get; }
+    public RelayCommand TogglePauseCommand { get; }
+    public RelayCommand BlockCommand { get; }
+    public RelayCommand RecordConnectionsCommand { get; }
+    public RelayCommand ClearConnectionsCommand { get; }
+    public RelayCommand ClearCapCommand { get; }
+    public RelayCommand ResetCapCommand { get; }
 
     private ProcessRowViewModel? AsRow(object? o) => (o as ProcessRowViewModel) ?? SelectedRow;
 
@@ -91,6 +104,28 @@ public sealed class MainViewModel : ObservableObject
     {
         get => _searchText;
         set { if (SetProperty(ref _searchText, value)) RowsView.Refresh(); }
+    }
+
+    private bool _isPaused;
+    public bool IsPaused
+    {
+        get => _isPaused;
+        set { if (SetProperty(ref _isPaused, value)) OnPropertyChanged(nameof(PauseButtonText)); }
+    }
+
+    public string PauseButtonText => IsPaused ? "▶ Resume view" : "⏸ Pause view";
+
+    public bool AutoSort
+    {
+        get => _settings.AutoSort;
+        set
+        {
+            if (_settings.AutoSort == value) return;
+            _settings.AutoSort = value;
+            RowsView.IsLiveSorting = value;
+            _settings.Save();
+            OnPropertyChanged();
+        }
     }
 
     private string _totalDownText = "—";
@@ -133,6 +168,9 @@ public sealed class MainViewModel : ObservableObject
 
     private void ApplySnapshot(UsageSnapshot snapshot)
     {
+        // Frozen view: keep the table still so the user can read/click. Engine keeps recording.
+        if (IsPaused) return;
+
         double downRate = 0, upRate = 0;
         foreach (var g in snapshot.Groups)
         {
@@ -245,6 +283,87 @@ public sealed class MainViewModel : ObservableObject
         if (_tracker.IsRecording) _tracker.Stop();
         else _tracker.Start();
         IsRecording = _tracker.IsRecording;
+    }
+
+    private void ToggleBlock(ProcessRowViewModel? row)
+    {
+        if (row?.ExePath is not { } exe) return;
+        bool newState = !row.IsBlocked;
+        row.IsBlocked = newState; // optimistic
+        string key = row.GroupKey;
+        Task.Run(() =>
+        {
+            bool ok = _tracker.SetBlocked(key, exe, newState);
+            if (!ok)
+                _dispatcher.Invoke(() =>
+                {
+                    row.IsBlocked = !newState;
+                    MessageBox.Show("Could not change the firewall rule.\nMake sure NetUsage Monitor is running as administrator.",
+                        "NetUsage Monitor", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+                });
+        });
+    }
+
+    private void ToggleRecordConnections(ProcessRowViewModel? row)
+    {
+        if (row is null) return;
+        bool on = !row.IsRecordingConnections;
+        _settings.SetRecordingConnections(row.GroupKey, on);
+        row.IsRecordingConnections = on;
+        _settings.Save();
+    }
+
+    private void ClearConnections(ProcessRowViewModel? row)
+    {
+        if (row is null) return;
+        var answer = MessageBox.Show(
+            $"Delete recorded connections for \"{row.DisplayName}\"?",
+            "Delete connections", System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Warning);
+        if (answer == System.Windows.MessageBoxResult.Yes)
+            _tracker.Database.DeleteConnections(row.GroupKey);
+    }
+
+    /// <summary>Sets a data cap on the app (called by the cap dialog).</summary>
+    public void ApplyCap(ProcessRowViewModel row, long limitBytes, CapPeriod period)
+    {
+        var cap = new AppCap
+        {
+            LimitBytes = limitBytes,
+            Period = period,
+            ResetUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            Tripped = false
+        };
+        _settings.SetCap(row.GroupKey, cap);
+        _settings.Save();
+        row.HasCap = true;
+        row.CapLimit = limitBytes;
+        row.CapTripped = false;
+    }
+
+    private void ClearCap(ProcessRowViewModel? row)
+    {
+        if (row is null) return;
+        if (row.CapTripped && row.ExePath is { } exe)
+        {
+            string key = row.GroupKey;
+            Task.Run(() => _tracker.SetBlocked(key, exe, false));
+            row.IsBlocked = false;
+        }
+        _settings.SetCap(row.GroupKey, null);
+        _settings.Save();
+        row.HasCap = false;
+        row.CapTripped = false;
+        row.CapLimit = 0;
+    }
+
+    private void ResetCap(ProcessRowViewModel? row)
+    {
+        if (row is null) return;
+        string key = row.GroupKey;
+        string? exe = row.ExePath;
+        Task.Run(() => _tracker.ResetCap(key, exe));
+        row.CapTripped = false;
+        row.IsBlocked = false;
     }
 
     private void ExportCsv()

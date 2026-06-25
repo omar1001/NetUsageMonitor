@@ -13,6 +13,9 @@ public readonly record struct HistoryPoint(long UnixSeconds, long Sent, long Rec
 /// <summary>A sample row to persist for one app group in a flush.</summary>
 public readonly record struct SampleRow(string GroupKey, string DisplayName, string? ExePath, long Sent, long Received);
 
+/// <summary>One recorded remote endpoint an app connected to.</summary>
+public readonly record struct ConnectionRow(string RemoteIp, int Port, string Proto, string? Host, long FirstSeen, long LastSeen, long Hits);
+
 /// <summary>
 /// SQLite-backed store for network-usage samples. A single connection is guarded by a lock; access
 /// frequency is low (a batched write every few seconds, light reads for the UI) so contention is
@@ -62,7 +65,21 @@ public sealed class UsageDatabase : IDisposable
                     recv    INTEGER NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_samples_ts ON samples(ts);
-                CREATE INDEX IF NOT EXISTS idx_samples_app_ts ON samples(app_id, ts);");
+                CREATE INDEX IF NOT EXISTS idx_samples_app_ts ON samples(app_id, ts);
+                CREATE TABLE IF NOT EXISTS connections (
+                    group_key TEXT NOT NULL,
+                    remote_ip TEXT NOT NULL,
+                    port      INTEGER NOT NULL,
+                    proto     TEXT NOT NULL,
+                    host      TEXT,
+                    first_ts  INTEGER NOT NULL,
+                    last_ts   INTEGER NOT NULL,
+                    hits      INTEGER NOT NULL,
+                    PRIMARY KEY (group_key, remote_ip, port)
+                );
+                CREATE INDEX IF NOT EXISTS idx_conn_group ON connections(group_key, last_ts);
+                CREATE INDEX IF NOT EXISTS idx_conn_ip ON connections(remote_ip);
+                CREATE INDEX IF NOT EXISTS idx_conn_last ON connections(last_ts);");
 
             _appIdCache.Clear();
         }
@@ -146,6 +163,22 @@ public sealed class UsageDatabase : IDisposable
         return result;
     }
 
+    /// <summary>Total bytes (sent+received) for one app since a timestamp. Used for data-cap checks.</summary>
+    public long GetTotalForKeySince(string groupKey, long sinceUnixSeconds)
+    {
+        lock (_lock)
+        {
+            using var cmd = _connection.CreateCommand();
+            cmd.CommandText = @"
+                SELECT COALESCE(SUM(s.sent + s.recv), 0)
+                FROM samples s JOIN apps a ON a.id = s.app_id
+                WHERE a.group_key = $k AND s.ts >= $since;";
+            cmd.Parameters.AddWithValue("$k", groupKey);
+            cmd.Parameters.AddWithValue("$since", sinceUnixSeconds);
+            return Convert.ToInt64(cmd.ExecuteScalar());
+        }
+    }
+
     /// <summary>History points for one app since a timestamp, ordered by time.</summary>
     public List<HistoryPoint> GetHistory(string groupKey, long sinceUnixSeconds)
     {
@@ -215,6 +248,103 @@ public sealed class UsageDatabase : IDisposable
             using var cmd = _connection.CreateCommand();
             cmd.CommandText = "DELETE FROM samples WHERE app_id IN (SELECT id FROM apps WHERE group_key = $k);";
             cmd.Parameters.AddWithValue("$k", groupKey);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    // ---- Connections --------------------------------------------------------
+
+    public void RecordConnection(string groupKey, string remoteIp, int port, string proto, string? host, long unixSeconds)
+    {
+        if (string.IsNullOrEmpty(remoteIp)) return;
+        lock (_lock)
+        {
+            using var cmd = _connection.CreateCommand();
+            cmd.CommandText = @"
+                INSERT INTO connections (group_key, remote_ip, port, proto, host, first_ts, last_ts, hits)
+                VALUES ($g, $ip, $p, $pr, $h, $ts, $ts, 1)
+                ON CONFLICT(group_key, remote_ip, port) DO UPDATE SET
+                    last_ts = excluded.last_ts,
+                    hits = hits + 1,
+                    host = COALESCE(connections.host, excluded.host);";
+            cmd.Parameters.AddWithValue("$g", groupKey);
+            cmd.Parameters.AddWithValue("$ip", remoteIp);
+            cmd.Parameters.AddWithValue("$p", port);
+            cmd.Parameters.AddWithValue("$pr", proto);
+            cmd.Parameters.AddWithValue("$h", (object?)host ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$ts", unixSeconds);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>Fills in the resolved host for every row with this remote IP that doesn't have one.</summary>
+    public void UpdateHostForIp(string remoteIp, string host)
+    {
+        lock (_lock)
+        {
+            using var cmd = _connection.CreateCommand();
+            cmd.CommandText = "UPDATE connections SET host = $h WHERE remote_ip = $ip AND (host IS NULL OR host = '');";
+            cmd.Parameters.AddWithValue("$h", host);
+            cmd.Parameters.AddWithValue("$ip", remoteIp);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    public List<ConnectionRow> GetConnections(string groupKey, int limit)
+    {
+        var rows = new List<ConnectionRow>();
+        lock (_lock)
+        {
+            using var cmd = _connection.CreateCommand();
+            cmd.CommandText = @"
+                SELECT remote_ip, port, proto, host, first_ts, last_ts, hits
+                FROM connections WHERE group_key = $g ORDER BY last_ts DESC LIMIT $lim;";
+            cmd.Parameters.AddWithValue("$g", groupKey);
+            cmd.Parameters.AddWithValue("$lim", limit);
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+                rows.Add(new ConnectionRow(
+                    reader.GetString(0), reader.GetInt32(1), reader.GetString(2),
+                    reader.IsDBNull(3) ? null : reader.GetString(3),
+                    reader.GetInt64(4), reader.GetInt64(5), reader.GetInt64(6)));
+        }
+        return rows;
+    }
+
+    public int CountConnections(string groupKey)
+    {
+        lock (_lock)
+        {
+            using var cmd = _connection.CreateCommand();
+            cmd.CommandText = "SELECT COUNT(*) FROM connections WHERE group_key = $g;";
+            cmd.Parameters.AddWithValue("$g", groupKey);
+            return Convert.ToInt32(cmd.ExecuteScalar());
+        }
+    }
+
+    public void DeleteConnections(string groupKey)
+    {
+        lock (_lock)
+        {
+            using var cmd = _connection.CreateCommand();
+            cmd.CommandText = "DELETE FROM connections WHERE group_key = $g;";
+            cmd.Parameters.AddWithValue("$g", groupKey);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    public void DeleteAllConnections()
+    {
+        lock (_lock) Execute("DELETE FROM connections;");
+    }
+
+    public void PruneConnections(long cutoffUnixSeconds)
+    {
+        lock (_lock)
+        {
+            using var cmd = _connection.CreateCommand();
+            cmd.CommandText = "DELETE FROM connections WHERE last_ts < $cut;";
+            cmd.Parameters.AddWithValue("$cut", cutoffUnixSeconds);
             cmd.ExecuteNonQuery();
         }
     }

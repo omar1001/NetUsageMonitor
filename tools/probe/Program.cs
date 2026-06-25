@@ -71,6 +71,32 @@ using (var db = new UsageDatabase())
     db.DeleteAllSamples();
     Check("all records deleted", db.GetTotalsSince(0).Count == 0);
     Check("db size reported > 0", db.GetDatabaseSizeBytes() > 0);
+
+    // ---- GetTotalForKeySince (used by data caps) ----
+    db.WriteSamples(now - 100, new[] { new SampleRow("c:\\app\\game.exe", "Game", "c:\\app\\game.exe", 1000, 4000) });
+    Check("cap total for key", db.GetTotalForKeySince("c:\\app\\game.exe", now - 3600) == 5000);
+
+    // ---- Connections ----
+    db.RecordConnection("c:\\app\\chrome.exe", "1.2.3.4", 443, "TCP", null, now);
+    db.RecordConnection("c:\\app\\chrome.exe", "1.2.3.4", 443, "TCP", "example.com", now);   // host fills via COALESCE, hits++
+    db.RecordConnection("c:\\app\\chrome.exe", "5.6.7.8", 80, "TCP", null, now);
+    var conns = db.GetConnections("c:\\app\\chrome.exe", 10);
+    Check("two connection endpoints", conns.Count == 2);
+    var https = conns.First(c => c.Port == 443);
+    Check("connection hits aggregated", https.Hits == 2);
+    Check("connection host set via COALESCE", https.Host == "example.com");
+
+    db.UpdateHostForIp("5.6.7.8", "cdn.test");
+    var http = db.GetConnections("c:\\app\\chrome.exe", 10).First(c => c.Port == 80);
+    Check("UpdateHostForIp filled host", http.Host == "cdn.test");
+    Check("CountConnections", db.CountConnections("c:\\app\\chrome.exe") == 2);
+
+    db.PruneConnections(now + 10); // cutoff after last_ts -> removes all
+    Check("PruneConnections removed old", db.CountConnections("c:\\app\\chrome.exe") == 0);
+
+    db.RecordConnection("c:\\app\\steam.exe", "9.9.9.9", 27015, "TCP", null, now);
+    db.DeleteConnections("c:\\app\\steam.exe");
+    Check("DeleteConnections", db.CountConnections("c:\\app\\steam.exe") == 0);
 }
 
 try { Directory.Delete(dir, true); } catch { /* ignore */ }

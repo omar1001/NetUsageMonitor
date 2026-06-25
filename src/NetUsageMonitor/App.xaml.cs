@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using System.Windows;
+using NetUsageMonitor.Common;
 using NetUsageMonitor.Configuration;
 using NetUsageMonitor.Engine;
 using NetUsageMonitor.Ui;
@@ -63,6 +64,7 @@ public partial class App : Application
         _icons = new IconProvider();
         _tracker = new UsageTracker(_settings);
         _tracker.Faulted += OnTrackerFaulted;
+        _tracker.CapTripped += OnCapTripped;
         _tracker.Start();
 
         // ---- UI ----
@@ -189,6 +191,18 @@ public partial class App : Application
         try { _settings?.Save(); } catch { /* ignore */ }
 
         Shutdown();
+    }
+
+    private void OnCapTripped(CapNotification n)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (!_settings.NotifyOnCap) return;
+            _trayIcon?.ShowBalloonTip(6000, "Data limit reached",
+                $"{n.DisplayName} reached its limit " +
+                $"({ByteFormatter.Bytes(n.UsedBytes)} / {ByteFormatter.Bytes(n.LimitBytes)}) and its internet was blocked.",
+                WinForms.ToolTipIcon.Warning);
+        });
     }
 
     private void OnTrackerFaulted(Exception ex)

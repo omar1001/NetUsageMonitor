@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Linq;
 using System.Windows;
 using NetUsageMonitor.Common;
 using NetUsageMonitor.Ui;
@@ -43,6 +44,7 @@ public partial class MainWindow : Window
         {
             Chart.Clear();
             AllTimeText.Text = "—";
+            ConnectionsList.ItemsSource = null;
             return;
         }
 
@@ -58,7 +60,42 @@ public partial class MainWindow : Window
                 ? ByteFormatter.Bytes(t.Sent + t.Received)
                 : "0 B";
         }
+
+        RefreshConnections(row);
     }
+
+    private void RefreshConnections(ProcessRowViewModel row)
+    {
+        if (!row.IsRecordingConnections)
+        {
+            ConnectionsList.ItemsSource = null;
+            return;
+        }
+
+        var conns = _vm.Tracker.Database.GetConnections(row.GroupKey, 100);
+        ConnectionsList.ItemsSource = conns.Select(c =>
+        {
+            string title = string.IsNullOrEmpty(c.Host) ? c.RemoteIp : c.Host!;
+            string last = DateTimeOffset.FromUnixTimeSeconds(c.LastSeen).LocalDateTime.ToString("MMM d, HH:mm");
+            return new ConnectionDisplay(title, $"{c.RemoteIp}:{c.Port} · {c.Proto} · {c.Hits} hits · {last}");
+        }).ToList();
+    }
+
+    private void OnSetCap(object sender, RoutedEventArgs e)
+    {
+        var row = _vm.SelectedRow;
+        if (row is null) return;
+
+        var existing = _vm.Settings.GetCap(row.GroupKey);
+        var dialog = new CapDialog(row.DisplayName, existing) { Owner = this };
+        if (dialog.ShowDialog() == true)
+        {
+            _vm.ApplyCap(row, dialog.LimitBytes, dialog.Period);
+            RefreshDetail(refreshAllTime: false);
+        }
+    }
+
+    private sealed record ConnectionDisplay(string Title, string Subtitle);
 
     private void OnSettingsClick(object sender, RoutedEventArgs e)
     {

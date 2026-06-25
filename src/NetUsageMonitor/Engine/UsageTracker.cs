@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using NetUsageMonitor.Configuration;
+using NetUsageMonitor.Network;
 using NetUsageMonitor.Storage;
 using Timer = System.Threading.Timer;
 
@@ -26,7 +28,22 @@ public sealed class GroupUsage
     public bool IsRecorded { get; init; }
     public bool IsIgnored { get; init; }
     public bool IsKept { get; init; }
+
+    /// <summary>Internet blocked via Windows Firewall.</summary>
+    public bool IsBlocked { get; init; }
+
+    /// <summary>Connection/domain recording enabled for this app.</summary>
+    public bool IsRecordingConnections { get; init; }
+
+    /// <summary>A data cap is configured.</summary>
+    public bool HasCap { get; init; }
+    public long CapLimitBytes { get; init; }
+    public long CapUsedBytes { get; init; }
+    public bool CapTripped { get; init; }
 }
+
+/// <summary>Raised when a data cap trips and the app is auto-blocked.</summary>
+public readonly record struct CapNotification(string GroupKey, string DisplayName, long UsedBytes, long LimitBytes);
 
 /// <summary>A point-in-time view of all tracked apps.</summary>
 public sealed class UsageSnapshot
@@ -66,10 +83,18 @@ public sealed class UsageTracker : IDisposable
     private long _dbSize;
     private Dictionary<string, UsageTotal> _hourTotals = new(StringComparer.OrdinalIgnoreCase);
 
+    private readonly ConcurrentQueue<ConnectionEvent> _connQueue = new();
+    private readonly ReverseDnsResolver _dns;
+    private Dictionary<string, long> _capUsed = new(StringComparer.OrdinalIgnoreCase);
+
     public UsageTracker(AppSettings settings)
     {
         _settings = settings;
         _database.Open(_settings.DatabasePath);
+        _dns = new ReverseDnsResolver((ip, host) =>
+        {
+            try { _database.UpdateHostForIp(ip, host); } catch { /* ignore */ }
+        });
     }
 
     public bool IsRecording { get; private set; }
@@ -79,6 +104,9 @@ public sealed class UsageTracker : IDisposable
 
     /// <summary>Raised when the capture session faults (typically: not running as administrator).</summary>
     public event Action<Exception>? Faulted;
+
+    /// <summary>Raised (on a background thread) when a data cap trips and the app is auto-blocked.</summary>
+    public event Action<CapNotification>? CapTripped;
 
     public ProcessInfoProvider ProcessInfo => _processInfo;
     public UsageDatabase Database => _database;
@@ -90,6 +118,7 @@ public sealed class UsageTracker : IDisposable
         _monitor = new EtwNetworkMonitor();
         _monitor.ProcessExited += _processInfo.Invalidate;
         _monitor.Faulted += ex => Faulted?.Invoke(ex);
+        _monitor.ConnectionObserved += ev => _connQueue.Enqueue(ev);
         _monitor.Start();
 
         _flushCountdown = _settings.FlushIntervalSeconds;
@@ -172,18 +201,22 @@ public sealed class UsageTracker : IDisposable
                 }
             }
 
+            ProcessConnections(now);
+
             if (--_flushCountdown <= 0)
             {
                 _flushCountdown = Math.Max(1, _settings.FlushIntervalSeconds);
                 FlushPending(now);
                 _hourTotals = _database.GetTotalsSince(now - _settings.RetentionMinutes * 60L);
                 _dbSize = _database.GetDatabaseSizeBytes();
+                EvaluateCaps(now);
             }
 
             if (--_pruneCountdown <= 0)
             {
                 _pruneCountdown = 60;
                 _database.PruneExceptKept(now - _settings.RetentionMinutes * 60L, _settings.GetKeptKeysSnapshot());
+                _database.PruneConnections(now - _settings.ConnectionRetentionDays * 86400L);
             }
 
             EmitSnapshot();
@@ -212,14 +245,81 @@ public sealed class UsageTracker : IDisposable
             _database.WriteSamples(now, rows);
     }
 
+    private void ProcessConnections(long now)
+    {
+        if (!_settings.AnyConnectionRecording())
+        {
+            // Nothing to record — drain the queue so it can't grow.
+            while (_connQueue.TryDequeue(out _)) { }
+            return;
+        }
+
+        int budget = 2000;
+        while (budget-- > 0 && _connQueue.TryDequeue(out var ev))
+        {
+            if (string.IsNullOrEmpty(ev.RemoteAddress)) continue;
+            var id = _processInfo.Resolve(ev.Pid);
+            if (!_settings.IsRecordingConnections(id.GroupKey)) continue;
+
+            string? host = _dns.TryGet(ev.RemoteAddress);
+            _database.RecordConnection(id.GroupKey, ev.RemoteAddress, ev.RemotePort, "TCP", host, now);
+            if (host is null) _dns.Resolve(ev.RemoteAddress);
+        }
+    }
+
+    private void EvaluateCaps(long now)
+    {
+        var caps = _settings.GetCapsSnapshot();
+        if (caps.Count == 0)
+        {
+            if (_capUsed.Count > 0) _capUsed = new(StringComparer.OrdinalIgnoreCase);
+            return;
+        }
+
+        var used = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, cap) in caps)
+        {
+            if (cap.LimitBytes <= 0) continue;
+            long start = PeriodStart(cap, now);
+            long total = _database.GetTotalForKeySince(key, start);
+            used[key] = total;
+
+            if (total >= cap.LimitBytes && !cap.Tripped)
+            {
+                cap.Tripped = true;
+                _settings.SetCap(key, cap);
+                _settings.Save();
+
+                string? exe = _live.TryGetValue(key, out var lv) ? lv.ExePath : null;
+                string name = lv?.DisplayName ?? key;
+                Task.Run(() => SetBlocked(key, exe, true));
+                CapTripped?.Invoke(new CapNotification(key, name, total, cap.LimitBytes));
+            }
+        }
+        _capUsed = used;
+    }
+
+    private static long PeriodStart(AppCap cap, long now)
+    {
+        var localNow = DateTimeOffset.Now;
+        return cap.Period switch
+        {
+            CapPeriod.Daily => new DateTimeOffset(localNow.Year, localNow.Month, localNow.Day, 0, 0, 0, localNow.Offset).ToUnixTimeSeconds(),
+            CapPeriod.Monthly => new DateTimeOffset(localNow.Year, localNow.Month, 1, 0, 0, 0, localNow.Offset).ToUnixTimeSeconds(),
+            _ => cap.ResetUnix // Total: since the cap was set / last reset
+        };
+    }
+
     private void EmitSnapshot()
     {
         var groups = new List<GroupUsage>(_live.Count);
         foreach (var (key, live) in _live)
         {
             _hourTotals.TryGetValue(key, out var hour);
-            bool ignored = _settings.IsIgnored(key);
-            bool kept = _settings.IsKept(key);
+            var cap = _settings.GetCap(key);
+            bool hasCap = cap is { LimitBytes: > 0 };
+            _capUsed.TryGetValue(key, out long capUsed);
+
             groups.Add(new GroupUsage
             {
                 GroupKey = key,
@@ -233,8 +333,14 @@ public sealed class UsageTracker : IDisposable
                 HourSent = hour.Sent + live.PendingSent,
                 HourReceived = hour.Received + live.PendingRecv,
                 IsRecorded = _settings.ShouldRecord(key),
-                IsIgnored = ignored,
-                IsKept = kept
+                IsIgnored = _settings.IsIgnored(key),
+                IsKept = _settings.IsKept(key),
+                IsBlocked = _settings.IsBlocked(key),
+                IsRecordingConnections = _settings.IsRecordingConnections(key),
+                HasCap = hasCap,
+                CapLimitBytes = hasCap ? cap!.LimitBytes : 0,
+                CapUsedBytes = capUsed,
+                CapTripped = hasCap && cap!.Tripped
             });
         }
 
@@ -245,6 +351,29 @@ public sealed class UsageTracker : IDisposable
             RetentionMinutes = _settings.RetentionMinutes,
             IsRecording = IsRecording
         });
+    }
+
+    /// <summary>Blocks/unblocks an app's internet (Windows Firewall) and records the intent in settings.</summary>
+    public bool SetBlocked(string groupKey, string? exePath, bool blocked)
+    {
+        bool ok = blocked
+            ? FirewallController.Block(exePath ?? groupKey)
+            : FirewallController.Unblock(exePath ?? groupKey);
+        _settings.SetBlocked(groupKey, blocked);
+        _settings.Save();
+        return ok;
+    }
+
+    /// <summary>Resets a tripped cap: restarts the counter and restores internet access.</summary>
+    public void ResetCap(string groupKey, string? exePath)
+    {
+        var cap = _settings.GetCap(groupKey);
+        if (cap is null) return;
+        cap.Tripped = false;
+        cap.ResetUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        _settings.SetCap(groupKey, cap);
+        SetBlocked(groupKey, exePath, false);
+        _capUsed.Remove(groupKey);
     }
 
     /// <summary>Switches the records database to a new folder, moving existing data if possible.</summary>

@@ -21,18 +21,24 @@ It records **only the amount of data** used (KB / MB / GB) — never the content
 ## Features
 
 - 📊 **Live per-app usage** — download and upload speed for every process, updated every second.
-- 🕑 **History** — keeps the **last hour** of usage by default and prunes older data automatically.
+- 🕑 **History & averages** — keeps the **last hour** by default (auto-pruned) and shows per-minute averages.
 - ♾️ **Keep forever** — mark specific apps to **record indefinitely** (their history is never deleted).
+- 🚫 **Block internet per app** — one-click cut an app's internet on/off (Windows Firewall).
+- 📉 **Data caps** — set a limit (total/daily/monthly); when an app reaches it, it's **auto-blocked and you're notified**. Resettable.
+- 🌐 **Connection recording** — optionally record the **domains/IPs** an app talks to (toggle per app, deletable, auto-pruned).
+- ⏸️ **Pause the view** — freeze the list so you can read/click while recording keeps running.
 - 🧩 **Grouping** — all instances of one program (e.g. every `chrome.exe`) are combined into one row.
 - 🖼️ **Names + icons** — apps are shown by friendly name and their real icon, like Task Manager.
-- 🔍 **Search & sort** — filter by name/path and sort by any column (top talkers float to the top).
+- 🔍 **Search & sort** — filter by name/path and sort by any column (optional live auto-sort).
 - 🎯 **Focus / ignore** — *Only track this app*, or *Ignore* apps you don't care about.
 - 🗂️ **Choose where records live** — pick any folder for the records database.
 - 🔌 **Runs in the background** — closing the window minimizes to the tray and keeps recording.
 - 🚀 **Start with Windows** — optional auto-start (minimized) at sign-in.
 - 🗑️ **Full control of data** — delete one app's records, old records, or everything, anytime.
 - 📤 **Export** — export the current view to CSV.
-- 🔒 **Private** — stores byte counts only; no packet contents, no URLs, nothing leaves your PC.
+- 🔒 **Private** — stores byte counts (and, if you enable it, domains) only; no packet contents, nothing leaves your PC.
+
+> **Honest limits (no kernel driver):** full HTTPS **URLs** and raw **packet payloads** can't be captured without a packet driver and stay encrypted regardless — connection recording shows **domains/IPs**, not full URLs. Speed **throttling** isn't included; use **block** or **data caps** to control heavy apps.
 
 ---
 
@@ -57,6 +63,10 @@ It's a **single self-contained `.exe`** — no installer and no need to install 
 | Stop recording an app entirely | Right-click → **Ignore this app**. |
 | Record only one (or a few) apps | Right-click → **Only track this app** (switches to "only selected" mode). |
 | Go back to recording everything | Right-click → **Track all apps**. |
+| Cut an app's internet completely | Select it → **Block internet** in the right panel. |
+| Auto-block an app at a data limit | Select it → **Set / change limit** → amount + total/daily/monthly. |
+| See the domains/IPs an app uses | Select it → **Record connections** → list appears in the panel. |
+| Freeze the list so I can click | Top bar **⏸ Pause view** (recording keeps running). |
 | Change how long history is kept | **⚙ Settings → Retention**. |
 | Choose where records are stored | **⚙ Settings → Records location → Browse**. |
 | Delete records | Right-click an app → *Delete this app's records*, or **⚙ Settings → Manage records**. |

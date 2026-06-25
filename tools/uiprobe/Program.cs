@@ -40,6 +40,11 @@ internal static class Program
             settingsWin.Arrange(new System.Windows.Rect(0, 0, 560, 700));
             settingsWin.UpdateLayout();
 
+            var capWin = new CapDialog("Test App", null);
+            capWin.Measure(new System.Windows.Size(400, 300));
+            capWin.Arrange(new System.Windows.Rect(0, 0, 400, 300));
+            capWin.UpdateLayout();
+
             tracker.Dispose();
             try { Directory.Delete(settings.RecordsFolder, true); } catch { /* ignore */ }
 

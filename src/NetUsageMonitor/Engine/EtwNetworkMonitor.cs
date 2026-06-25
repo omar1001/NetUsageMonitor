@@ -7,6 +7,9 @@ namespace NetUsageMonitor.Engine;
 /// <summary>A single tick's worth of bytes for one PID.</summary>
 public readonly record struct PidDelta(int Pid, long Sent, long Received);
 
+/// <summary>An observed outbound TCP connection (raised on the ETW thread).</summary>
+public readonly record struct ConnectionEvent(int Pid, string RemoteAddress, int RemotePort);
+
 /// <summary>
 /// Captures per-process network bytes using ETW's kernel TCP/UDP providers (the same data Task
 /// Manager uses). Counters are incremented on the high-frequency ETW thread with interlocked adds and
@@ -34,6 +37,9 @@ public sealed class EtwNetworkMonitor : IDisposable
     /// <summary>Raised (on the ETW thread) when a process exits, so PID caches can be invalidated.</summary>
     public event Action<int>? ProcessExited;
 
+    /// <summary>Raised (on the ETW thread) for each new outbound TCP connection.</summary>
+    public event Action<ConnectionEvent>? ConnectionObserved;
+
     public bool IsRunning { get; private set; }
 
     public void Start()
@@ -60,6 +66,10 @@ public sealed class EtwNetworkMonitor : IDisposable
         kernel.UdpIpSend += d => Add(d.ProcessID, sent: d.size);
         kernel.UdpIpRecvIPV6 += d => Add(d.ProcessID, received: d.size);
         kernel.UdpIpSendIPV6 += d => Add(d.ProcessID, sent: d.size);
+
+        // Outbound connections (for per-app connection/domain recording).
+        kernel.TcpIpConnect += d => ConnectionObserved?.Invoke(new ConnectionEvent(d.ProcessID, d.daddr?.ToString() ?? "", d.dport));
+        kernel.TcpIpConnectIPV6 += d => ConnectionObserved?.Invoke(new ConnectionEvent(d.ProcessID, d.daddr?.ToString() ?? "", d.dport));
 
         // Keep PID->app mapping correct when PIDs get reused.
         kernel.ProcessStop += d => ProcessExited?.Invoke(d.ProcessID);

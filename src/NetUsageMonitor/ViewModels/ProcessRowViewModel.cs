@@ -1,4 +1,5 @@
 using System.Windows.Media;
+using NetUsageMonitor.Common;
 using NetUsageMonitor.Engine;
 using NetUsageMonitor.Ui;
 
@@ -53,8 +54,34 @@ public sealed class ProcessRowViewModel : ObservableObject
     private bool _isRecorded;
     public bool IsRecorded { get => _isRecorded; private set => SetProperty(ref _isRecorded, value); }
 
+    private bool _isBlocked;
+    public bool IsBlocked { get => _isBlocked; set => SetProperty(ref _isBlocked, value); }
+
+    private bool _isRecordingConnections;
+    public bool IsRecordingConnections { get => _isRecordingConnections; set => SetProperty(ref _isRecordingConnections, value); }
+
+    private bool _hasCap;
+    public bool HasCap { get => _hasCap; set => SetProperty(ref _hasCap, value); }
+
+    private long _capLimit;
+    public long CapLimit { get => _capLimit; set => SetProperty(ref _capLimit, value); }
+
+    private long _capUsed;
+    public long CapUsed { get => _capUsed; set => SetProperty(ref _capUsed, value); }
+
+    private bool _capTripped;
+    public bool CapTripped { get => _capTripped; set => SetProperty(ref _capTripped, value); }
+
     private string _statusText = "Idle";
     public string StatusText { get => _statusText; private set => SetProperty(ref _statusText, value); }
+
+    // ---- Derived (for the detail panel) ----
+    public double CapPercent => HasCap && CapLimit > 0 ? Math.Min(100.0, CapUsed * 100.0 / CapLimit) : 0;
+    public string CapText => HasCap ? $"{ByteFormatter.Bytes(CapUsed)} / {ByteFormatter.Bytes(CapLimit)}" : "No limit set";
+    public string AvgPerMinDownText => ByteFormatter.Bytes((long)(DownHour / 60.0)) + "/min";
+    public string AvgPerMinUpText => ByteFormatter.Bytes((long)(UpHour / 60.0)) + "/min";
+    public string BlockText => IsBlocked ? "Unblock internet" : "Block internet";
+    public string RecordConnText => IsRecordingConnections ? "Stop recording connections" : "Record connections";
 
     public void Update(GroupUsage g, IconProvider icons)
     {
@@ -74,14 +101,30 @@ public sealed class ProcessRowViewModel : ObservableObject
         IsIgnored = g.IsIgnored;
         IsKept = g.IsKept;
         IsRecorded = g.IsRecorded;
+        IsBlocked = g.IsBlocked;
+        IsRecordingConnections = g.IsRecordingConnections;
+        HasCap = g.HasCap;
+        CapLimit = g.CapLimitBytes;
+        CapUsed = g.CapUsedBytes;
+        CapTripped = g.CapTripped;
         StatusText = ComputeStatus(g);
+
+        // Refresh derived values shown in the detail panel.
+        OnPropertyChanged(nameof(CapPercent));
+        OnPropertyChanged(nameof(CapText));
+        OnPropertyChanged(nameof(AvgPerMinDownText));
+        OnPropertyChanged(nameof(AvgPerMinUpText));
+        OnPropertyChanged(nameof(BlockText));
+        OnPropertyChanged(nameof(RecordConnText));
     }
 
     private static string ComputeStatus(GroupUsage g)
     {
+        if (g.IsBlocked) return "Blocked";
         if (g.IsIgnored) return "Ignored";
         if (!g.IsRecorded) return "Not tracked";
         bool active = g.RecvRate >= 1 || g.SentRate >= 1;
+        if (g.HasCap && g.CapTripped) return "Capped";
         if (g.IsKept) return active ? "Kept · Active" : "Kept";
         return active ? "Active" : "Idle";
     }

@@ -14,6 +14,28 @@ public enum TrackingMode
     OnlyListed = 1
 }
 
+/// <summary>The window over which a data cap is measured.</summary>
+public enum CapPeriod
+{
+    /// <summary>Cumulative usage since the cap was set / last reset.</summary>
+    Total = 0,
+    /// <summary>Resets at local midnight.</summary>
+    Daily = 1,
+    /// <summary>Resets on the 1st of the month.</summary>
+    Monthly = 2
+}
+
+/// <summary>A per-app data limit. When usage over the period reaches the limit, the app is blocked.</summary>
+public sealed class AppCap
+{
+    public long LimitBytes { get; set; }
+    public CapPeriod Period { get; set; } = CapPeriod.Total;
+    /// <summary>Unix seconds baseline used for the "Total" period (set when created / reset).</summary>
+    public long ResetUnix { get; set; }
+    /// <summary>True once the cap has tripped and the app was auto-blocked.</summary>
+    public bool Tripped { get; set; }
+}
+
 /// <summary>Well-known on-disk locations used by the app.</summary>
 public static class AppPaths
 {
@@ -69,6 +91,24 @@ public sealed class AppSettings
 
     /// <summary>Group keys recorded when <see cref="TrackingMode"/> is <see cref="TrackingMode.OnlyListed"/>.</summary>
     public HashSet<string> OnlyListedKeys { get; set; } = new();
+
+    /// <summary>Group keys whose internet is blocked via Windows Firewall.</summary>
+    public HashSet<string> BlockedKeys { get; set; } = new();
+
+    /// <summary>Group keys for which connection/domain recording is enabled.</summary>
+    public HashSet<string> RecordConnectionsKeys { get; set; } = new();
+
+    /// <summary>Per-app data caps, keyed by group key.</summary>
+    public Dictionary<string, AppCap> Caps { get; set; } = new();
+
+    /// <summary>How long connection records are kept, in days.</summary>
+    public int ConnectionRetentionDays { get; set; } = 7;
+
+    /// <summary>Re-sort the list automatically as live values change (off = rows stay put, easier to click).</summary>
+    public bool AutoSort { get; set; } = false;
+
+    /// <summary>Show a notification when a data cap trips.</summary>
+    public bool NotifyOnCap { get; set; } = true;
 
     [JsonIgnore]
     private readonly object _gate = new();
@@ -129,6 +169,57 @@ public sealed class AppSettings
         }
     }
 
+    public bool IsBlocked(string key)
+    {
+        lock (_gate) return BlockedKeys.Contains(key);
+    }
+
+    public void SetBlocked(string key, bool blocked)
+    {
+        lock (_gate)
+        {
+            if (blocked) BlockedKeys.Add(key); else BlockedKeys.Remove(key);
+        }
+    }
+
+    public bool IsRecordingConnections(string key)
+    {
+        lock (_gate) return RecordConnectionsKeys.Contains(key);
+    }
+
+    public void SetRecordingConnections(string key, bool on)
+    {
+        lock (_gate)
+        {
+            if (on) RecordConnectionsKeys.Add(key); else RecordConnectionsKeys.Remove(key);
+        }
+    }
+
+    /// <summary>True if any app currently has connection recording enabled.</summary>
+    public bool AnyConnectionRecording()
+    {
+        lock (_gate) return RecordConnectionsKeys.Count > 0;
+    }
+
+    public AppCap? GetCap(string key)
+    {
+        lock (_gate) return Caps.TryGetValue(key, out var c) ? c : null;
+    }
+
+    public void SetCap(string key, AppCap? cap)
+    {
+        lock (_gate)
+        {
+            if (cap is null) Caps.Remove(key); else Caps[key] = cap;
+        }
+    }
+
+    /// <summary>Snapshot of (key, cap) pairs for the engine to evaluate each tick.</summary>
+    public List<KeyValuePair<string, AppCap>> GetCapsSnapshot()
+    {
+        lock (_gate) return Caps.ToList();
+    }
+
     // ---- Persistence ----------------------------------------------------------------------------
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -187,9 +278,14 @@ public sealed class AppSettings
         if (RetentionMinutes < 1) RetentionMinutes = 60;
         if (FlushIntervalSeconds < 1) FlushIntervalSeconds = 5;
 
+        if (ConnectionRetentionDays < 1) ConnectionRetentionDays = 7;
+
         // Rebuild sets with a case-insensitive comparer so membership matches the lower-cased keys.
         IgnoredKeys = new HashSet<string>(IgnoredKeys ?? new(), StringComparer.OrdinalIgnoreCase);
         KeptKeys = new HashSet<string>(KeptKeys ?? new(), StringComparer.OrdinalIgnoreCase);
         OnlyListedKeys = new HashSet<string>(OnlyListedKeys ?? new(), StringComparer.OrdinalIgnoreCase);
+        BlockedKeys = new HashSet<string>(BlockedKeys ?? new(), StringComparer.OrdinalIgnoreCase);
+        RecordConnectionsKeys = new HashSet<string>(RecordConnectionsKeys ?? new(), StringComparer.OrdinalIgnoreCase);
+        Caps = new Dictionary<string, AppCap>(Caps ?? new(), StringComparer.OrdinalIgnoreCase);
     }
 }
